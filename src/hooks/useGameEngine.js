@@ -205,12 +205,19 @@ export const useGameEngine = () => {
     }, 1000);
   };
 
-  const moveBall = () => {
+  const moveBallRef = useRef();
+  useEffect(() => {
+    moveBallRef.current = moveBall;
+  });
+
+  const moveBall = (dt = 0.016) => {
     if (lifeLostState) return;
     if (bricks.length === 0) return; // Prevent glitch auto-completing levels before bricks are initialized
 
-    if (keys.current.ArrowLeft) setPaddleX((prev) => prev - 7);
-    if (keys.current.ArrowRight) setPaddleX((prev) => prev + 7);
+    const timeScale = dt * 60; // 1.0 at 60fps, 0.41 at 144fps
+
+    if (keys.current.ArrowLeft) setPaddleX((prev) => prev - 7 * timeScale);
+    if (keys.current.ArrowRight) setPaddleX((prev) => prev + 7 * timeScale);
 
     const currentPaddleX = paddleXRef.current;
 
@@ -232,10 +239,10 @@ export const useGameEngine = () => {
         dy = (dy / currentSpeed) * targetSpeed;
       }
 
-      if (x + dx < 0 || x + dx + ballSize > gameWidth) dx = -dx;
-      if (y + dy < 0) dy = -dy;
+      if (x + dx * timeScale < 0 || x + dx * timeScale + ballSize > gameWidth) dx = -dx;
+      if (y + dy * timeScale < 0) dy = -dy;
 
-      if (y + dy + ballSize > gameHeight - paddleHeight && x + ballSize > currentPaddleX && x < currentPaddleX + paddleWidth) {
+      if (y + dy * timeScale + ballSize > gameHeight - paddleHeight && x + ballSize > currentPaddleX && x < currentPaddleX + paddleWidth) {
         // Dynamic bounce angle based on hit location
         const hitPoint = (x + ballSize / 2) - (currentPaddleX + paddleWidth / 2);
         let normalizedHit = hitPoint / (paddleWidth / 2);
@@ -247,11 +254,11 @@ export const useGameEngine = () => {
         dx = speed * Math.sin(bounceAngle);
         dy = -Math.abs(speed * Math.cos(bounceAngle));
         if (dy > -2) dy = -2; // Ensure minimum vertical momentum
-      } else if (y + dy + ballSize > gameHeight) {
+      } else if (y + dy * timeScale + ballSize > gameHeight) {
         return null;
       }
 
-      const newBall = { x: x + dx, y: y + dy, dx, dy };
+      const newBall = { x: x + dx * timeScale, y: y + dy * timeScale, dx, dy };
 
       let hitBrickIndex = -1;
       for (let i = 0; i < updatedBricks.length; i++) {
@@ -301,11 +308,11 @@ export const useGameEngine = () => {
         }
       }
 
-      return { x: x + dx, y: y + dy, dx, dy };
+      return { x: x + dx * timeScale, y: y + dy * timeScale, dx, dy };
     }).filter(Boolean);
 
     if (newStar) {
-      newStar.y += 2;
+      newStar.y += 2 * timeScale;
       const paddleTop = gameHeight - paddleHeight;
       if (
         newStar.y + ballSize >= paddleTop &&
@@ -322,7 +329,7 @@ export const useGameEngine = () => {
     }
 
     if (newHeart) {
-      newHeart.y += 2;
+      newHeart.y += 2 * timeScale;
       const paddleTop = gameHeight - paddleHeight;
       if (
         newHeart.y + ballSize >= paddleTop &&
@@ -339,7 +346,7 @@ export const useGameEngine = () => {
     }
 
     if (newExpand) {
-      newExpand.y += 2;
+      newExpand.y += 2 * timeScale;
       const paddleTop = gameHeight - paddleHeight;
       if (
         newExpand.y + ballSize >= paddleTop &&
@@ -357,7 +364,7 @@ export const useGameEngine = () => {
     }
 
     if (newSpeed) {
-      newSpeed.y += 2.5;
+      newSpeed.y += 2.5 * timeScale;
       const paddleTop = gameHeight - paddleHeight;
       if (
         newSpeed.y + ballSize >= paddleTop &&
@@ -407,11 +414,23 @@ export const useGameEngine = () => {
 
   useEffect(() => {
     let animationFrameId;
-    if (running && !paused && !lifeLostState) {
-      animationFrameId = requestAnimationFrame(() => moveBall());
+    let lastTime = 0;
+    if (running && !paused) {
+      const loop = (time) => {
+        if (!lastTime) lastTime = time;
+        const dt = (time - lastTime) / 1000;
+        lastTime = time;
+        
+        const cappedDt = Math.min(dt, 0.1); // Max 100ms gap
+        if (moveBallRef.current) {
+          moveBallRef.current(cappedDt);
+        }
+        animationFrameId = requestAnimationFrame(loop);
+      };
+      animationFrameId = requestAnimationFrame(loop);
     }
     return () => cancelAnimationFrame(animationFrameId);
-  }, [running, paused, bricks, fallingStar, fallingHeart, fallingExpand, fallingSpeed, lifeLostState, balls]);
+  }, [running, paused]);
 
   return {
     gameWidth, gameHeight, paddleWidth, paddleHeight, ballSize,
