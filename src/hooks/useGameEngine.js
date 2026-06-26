@@ -1,21 +1,55 @@
 import { useState, useEffect, useRef } from "react";
+import { initBricks } from "../utils/levelGenerator";
 
 export const useGameEngine = () => {
+  // Game constants
+  const gameWidth = 320;
+  const gameHeight = 480;
+  const paddleHeight = 10;
+  const ballSize = 10;
+  const boomRadius = 1;
+
+  // UI & Flow State (Safe to use useState for low-frequency changes)
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [score, setScore] = useState(0);
-  const [topScore, setTopScore] = useState(() => parseInt(localStorage.getItem("topScore")) || 0);
   const [message, setMessage] = useState("Click Start to Play");
-  const [balls, setBalls] = useState([{ x: 160, y: 200, dx: 2.8, dy: -2.8 }]);
+  const [topScore, setTopScore] = useState(() => parseInt(localStorage.getItem("topScore")) || 0);
+  const [levelComplete, setLevelComplete] = useState(false);
+  const [showGameOver, setShowGameOver] = useState(false);
+  const [lifeLostState, setLifeLostState] = useState(false);
+  const [countdown, setCountdown] = useState(null);
+  
+  // Visual effects state
+  const [popAnimations, setPopAnimations] = useState([]);
+  
+  // High-Frequency Physics State (Stored in synchronous useRef to prevent stale closures and duplicate glitches)
+  const physicsRef = useRef({
+    balls: [],
+    bricks: [],
+    fallingStar: null,
+    fallingHeart: null,
+    fallingExpand: null,
+    fallingSpeed: null,
+    paddleWidth: 60,
+    speedBuffActive: false,
+    score: 0,
+    lives: 1,
+    level: 1,
+    levelJustCompleted: false
+  });
+
+  // Force React to re-render to display the latest physicsRef data
+  const [tick, setTick] = useState(0);
+
+  // Input State
   const [paddleXState, setPaddleXState] = useState(130);
+  const paddleX = paddleXState;
   const paddleXRef = useRef(130);
   const keys = useRef({ ArrowLeft: false, ArrowRight: false });
-  const [paddleWidth, setPaddleWidth] = useState(60);
 
-  const paddleX = paddleXState;
   const setPaddleX = (newX) => {
     let x = typeof newX === "function" ? newX(paddleXRef.current) : newX;
-    x = Math.max(0, Math.min(gameWidth - paddleWidth, x));
+    x = Math.max(0, Math.min(gameWidth - physicsRef.current.paddleWidth, x));
     paddleXRef.current = x;
     setPaddleXState(x);
   };
@@ -37,32 +71,9 @@ export const useGameEngine = () => {
     };
   }, []);
 
-  const [bricks, setBricks] = useState([]);
-  const [level, setLevel] = useState(1);
-  const [ballInterval, setBallInterval] = useState(null);
-  const [fallingStar, setFallingStar] = useState(null);
-  const [fallingHeart, setFallingHeart] = useState(null);
-  const [fallingExpand, setFallingExpand] = useState(null);
-  const [fallingSpeed, setFallingSpeed] = useState(null);
-  const [speedBuffActive, setSpeedBuffActive] = useState(false);
-  const [lives, setLives] = useState(1);
-  const [levelComplete, setLevelComplete] = useState(false);
-  const [showGameOver, setShowGameOver] = useState(false);
-  const [levelJustCompleted, setLevelJustCompleted] = useState(false);
-  const [popAnimations, setPopAnimations] = useState([]);
-  const [lifeLostState, setLifeLostState] = useState(false);
-  const [countdown, setCountdown] = useState(null);
-
-  const gameWidth = 320;
-  const gameHeight = 480;
-  const paddleHeight = 10;
-  const ballSize = 10;
-  const boomRadius = 1;
-
   const addPop = (x, y, type = "pop") => {
     const id = Date.now() + Math.random();
-    const pop = { x, y, id, type };
-    setPopAnimations((prev) => [...prev, pop]);
+    setPopAnimations((prev) => [...prev, { x, y, id, type }]);
     setTimeout(() => {
       setPopAnimations((prev) => prev.filter((p) => p.id !== id));
     }, 400);
@@ -81,94 +92,56 @@ export const useGameEngine = () => {
     }, 500);
   };
 
-  const initBricks = (lvl = level) => {
-    const rows = 3 + lvl;
-    const cols = 6;
-    const bWidth = 45;
-    const bHeight = 20;
-    let result = [];
-    const total = rows * cols;
-    const getRandomUniqueIndex = (used) => {
-       let idx;
-       do { idx = Math.floor(Math.random() * total); } while(used.includes(idx));
-       used.push(idx);
-       return idx;
-    };
-    const usedIndices = [];
-    const mysteryIndex = getRandomUniqueIndex(usedIndices);
-    const boomIndex = getRandomUniqueIndex(usedIndices);
-    const heartIndex = getRandomUniqueIndex(usedIndices);
-    const speedIndex = getRandomUniqueIndex(usedIndices);
-    const expandIndex = getRandomUniqueIndex(usedIndices);
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (Math.random() < 0.75) {
-          const id = r * cols + c;
-          const isSpecial = usedIndices.includes(id);
-          const isArmored = Math.random() < 0.20; // 20% chance
-          result.push({
-            id,
-            x: c * (bWidth + 5) + 5,
-            y: r * (bHeight + 5) + 30,
-            status: true,
-            row: r,
-            col: c,
-            isMystery: id === mysteryIndex,
-            isBoom: id === boomIndex,
-            isHeart: id === heartIndex,
-            isSpeed: id === speedIndex,
-            isExpand: id === expandIndex,
-            isArmored: isArmored && !isSpecial,
-            hp: (isArmored && !isSpecial) ? 2 : 1,
-          });
-        }
-      }
-    }
-    return result;
-  };
-
   const startGame = (customLevel = null) => {
     setRunning(true);
     setPaused(false);
     setMessage("");
-    const targetLevel = (customLevel !== null && typeof customLevel === 'number') ? customLevel : level;
-    setBricks(initBricks(targetLevel));
-    setBalls([{ x: 160, y: 300, dx: 2.5, dy: -2.5 }]);
-    setFallingStar(null);
-    setFallingHeart(null);
-    setFallingExpand(null);
-    setFallingSpeed(null);
-    setPaddleWidth(60);
-    setSpeedBuffActive(false);
+    setLifeLostState(false);
+    
+    const targetLevel = (customLevel !== null && typeof customLevel === 'number') ? customLevel : physicsRef.current.level;
+    
+    physicsRef.current = {
+      ...physicsRef.current,
+      level: targetLevel,
+      bricks: initBricks(targetLevel),
+      balls: [{ x: 160, y: 300, dx: 2.5, dy: -2.5 }],
+      fallingStar: null,
+      fallingHeart: null,
+      fallingExpand: null,
+      fallingSpeed: null,
+      paddleWidth: 60,
+      speedBuffActive: false,
+      levelJustCompleted: false
+    };
+    setTick(t => t + 1);
   };
 
   const restartGame = () => {
-    setScore(0);
-    setLevel(1);
-    setLives(1);
+    physicsRef.current.score = 0;
+    physicsRef.current.lives = 1;
+    physicsRef.current.level = 1;
     setLevelComplete(false);
     setShowGameOver(false);
     startGame(1);
   };
 
   const handleLevelAdvance = () => {
-    const nextLevel = level + 1;
-    setLevel(nextLevel);
+    physicsRef.current.level += 1;
     setLevelComplete(false);
-    setLevelJustCompleted(false);
-    startGame(nextLevel);
+    physicsRef.current.levelJustCompleted = false;
+    startGame(physicsRef.current.level);
   };
 
   const handleRetryLevel = () => {
     setLevelComplete(false);
-    setLevelJustCompleted(false);
+    physicsRef.current.levelJustCompleted = false;
     startGame();
   };
 
-  const endGame = (win, finalScore = score) => {
+  const endGame = (win) => {
     setRunning(false);
     setPaused(false);
+    const finalScore = physicsRef.current.score;
     if (finalScore > topScore) {
       setTopScore(finalScore);
       localStorage.setItem("topScore", finalScore);
@@ -178,61 +151,36 @@ export const useGameEngine = () => {
   };
 
   const resumeAfterLifeLoss = () => {
-    setBalls([{ x: paddleX + paddleWidth / 2 - ballSize / 2, y: gameHeight - paddleHeight - ballSize - 2, dx: 2.5, dy: -2.5 }]);
+    physicsRef.current.balls = [{ x: paddleXRef.current + physicsRef.current.paddleWidth / 2 - ballSize / 2, y: gameHeight - paddleHeight - ballSize - 2, dx: 2.5, dy: -2.5 }];
+    physicsRef.current.fallingExpand = null;
+    physicsRef.current.fallingSpeed = null;
+    physicsRef.current.paddleWidth = 60;
+    physicsRef.current.speedBuffActive = false;
+    
     setRunning(true);
     setPaused(false);
     setLifeLostState(false);
     setCountdown(null);
     setMessage("");
-    setFallingExpand(null);
-    setFallingSpeed(null);
-    setPaddleWidth(60);
-    setSpeedBuffActive(false);
+    setTick(t => t + 1);
   };
 
-  const triggerLifeLost = () => {
-    setLifeLostState(true);
-    setCountdown(5);
-    setMessage("Life lost! Get ready...");
-    let counter = 5;
-    const countdownInterval = setInterval(() => {
-      counter--;
-      setCountdown(counter);
-      if (counter <= 0) {
-        clearInterval(countdownInterval);
-        resumeAfterLifeLoss();
-      }
-    }, 1000);
-  };
+  // Pure physics loop using Synchronous useRef data to prevent ghost bugs
+  const physicsLoop = (dt) => {
+    const state = physicsRef.current;
+    if (state.bricks.length === 0) return;
 
-  const moveBallRef = useRef();
-  useEffect(() => {
-    moveBallRef.current = moveBall;
-  });
-
-  const moveBall = (dt = 0.016) => {
-    if (lifeLostState) return;
-    if (bricks.length === 0) return; // Prevent glitch auto-completing levels before bricks are initialized
-
-    const timeScale = dt * 60; // 1.0 at 60fps, 0.41 at 144fps
+    const timeScale = dt * 60; // 1.0 at 60fps
 
     if (keys.current.ArrowLeft) setPaddleX((prev) => prev - 7 * timeScale);
     if (keys.current.ArrowRight) setPaddleX((prev) => prev + 7 * timeScale);
 
     const currentPaddleX = paddleXRef.current;
 
-    let updatedBalls = [...balls];
-    let updatedBricks = [...bricks];
-    let newScore = score;
-    let newStar = fallingStar;
-    let newHeart = fallingHeart;
-    let newExpand = fallingExpand;
-    let newSpeed = fallingSpeed;
-
-    updatedBalls = updatedBalls.map((ball) => {
+    state.balls = state.balls.map((ball) => {
       let { x, y, dx, dy } = ball;
       
-      const targetSpeed = speedBuffActive ? 6.0 : 3.5; // Fast (buffed) vs Normal (slower) speed
+      const targetSpeed = state.speedBuffActive ? 6.0 : 3.5;
       const currentSpeed = Math.sqrt(dx * dx + dy * dy);
       if (currentSpeed > 0 && currentSpeed !== targetSpeed) {
         dx = (dx / currentSpeed) * targetSpeed;
@@ -242,18 +190,17 @@ export const useGameEngine = () => {
       if (x + dx * timeScale < 0 || x + dx * timeScale + ballSize > gameWidth) dx = -dx;
       if (y + dy * timeScale < 0) dy = -dy;
 
-      if (y + dy * timeScale + ballSize > gameHeight - paddleHeight && x + ballSize > currentPaddleX && x < currentPaddleX + paddleWidth) {
-        // Dynamic bounce angle based on hit location
-        const hitPoint = (x + ballSize / 2) - (currentPaddleX + paddleWidth / 2);
-        let normalizedHit = hitPoint / (paddleWidth / 2);
+      if (y + dy * timeScale + ballSize > gameHeight - paddleHeight && x + ballSize > currentPaddleX && x < currentPaddleX + state.paddleWidth) {
+        const hitPoint = (x + ballSize / 2) - (currentPaddleX + state.paddleWidth / 2);
+        let normalizedHit = hitPoint / (state.paddleWidth / 2);
         normalizedHit = Math.max(-1, Math.min(1, normalizedHit));
         
         const speed = Math.sqrt(dx * dx + dy * dy);
-        const bounceAngle = normalizedHit * (Math.PI / 3); // Max 60 degrees
+        const bounceAngle = normalizedHit * (Math.PI / 3);
         
         dx = speed * Math.sin(bounceAngle);
         dy = -Math.abs(speed * Math.cos(bounceAngle));
-        if (dy > -2) dy = -2; // Ensure minimum vertical momentum
+        if (dy > -2) dy = -2; 
       } else if (y + dy * timeScale + ballSize > gameHeight) {
         return null;
       }
@@ -261,8 +208,8 @@ export const useGameEngine = () => {
       const newBall = { x: x + dx * timeScale, y: y + dy * timeScale, dx, dy };
 
       let hitBrickIndex = -1;
-      for (let i = 0; i < updatedBricks.length; i++) {
-        const brick = updatedBricks[i];
+      for (let i = 0; i < state.bricks.length; i++) {
+        const brick = state.bricks[i];
         if (
           brick.status &&
           newBall.x + ballSize > brick.x &&
@@ -276,12 +223,12 @@ export const useGameEngine = () => {
       }
 
       if (hitBrickIndex !== -1) {
-        const hitBrick = updatedBricks[hitBrickIndex];
+        const hitBrick = state.bricks[hitBrickIndex];
         dy = -dy;
         if (hitBrick.isBoom) {
-          for (let b of updatedBricks) {
+          for (let b of state.bricks) {
             if (b.status && Math.abs(b.row - hitBrick.row) <= boomRadius && Math.abs(b.col - hitBrick.col) <= boomRadius) {
-              newScore += b.isMystery ? 10 : 1;
+              state.score += b.isMystery ? 10 : 1;
               addPop(b.x + 22, b.y + 10, "boom");
               b.status = false;
             }
@@ -292,18 +239,17 @@ export const useGameEngine = () => {
           const brickColor = hitBrick.isArmored ? "#c0392b" : rowColors[hitBrick.row % rowColors.length];
 
           if (hitBrick.hp <= 0) {
-            newScore += hitBrick.isMystery ? 10 : (hitBrick.isArmored ? 5 : 1);
-            if (hitBrick.isMystery) newStar = { x: hitBrick.x + 20, y: hitBrick.y + 20 };
-            if (hitBrick.isHeart) newHeart = { x: hitBrick.x + 20, y: hitBrick.y + 20 };
-            if (hitBrick.isExpand) newExpand = { x: hitBrick.x + 20, y: hitBrick.y + 20 };
-            if (hitBrick.isSpeed) newSpeed = { x: hitBrick.x + 20, y: hitBrick.y + 20 };
+            state.score += hitBrick.isMystery ? 10 : (hitBrick.isArmored ? 5 : 1);
+            if (hitBrick.isMystery) state.fallingStar = { x: hitBrick.x + 20, y: hitBrick.y + 20 };
+            if (hitBrick.isHeart) state.fallingHeart = { x: hitBrick.x + 20, y: hitBrick.y + 20 };
+            if (hitBrick.isExpand) state.fallingExpand = { x: hitBrick.x + 20, y: hitBrick.y + 20 };
+            if (hitBrick.isSpeed) state.fallingSpeed = { x: hitBrick.x + 20, y: hitBrick.y + 20 };
 
             addParticles(hitBrick.x + 22, hitBrick.y + 10, brickColor);
-            updatedBricks[hitBrickIndex] = { ...hitBrick, status: false };
+            state.bricks[hitBrickIndex].status = false;
           } else {
             addParticles(hitBrick.x + 22, hitBrick.y + 10, brickColor);
-            updatedBricks[hitBrickIndex] = { ...hitBrick };
-            newScore += 1;
+            state.score += 1;
           }
         }
       }
@@ -311,132 +257,137 @@ export const useGameEngine = () => {
       return { x: x + dx * timeScale, y: y + dy * timeScale, dx, dy };
     }).filter(Boolean);
 
-    if (newStar) {
-      newStar.y += 2 * timeScale;
+    // Update Powerups
+    if (state.fallingStar) {
+      state.fallingStar.y += 2 * timeScale;
       const paddleTop = gameHeight - paddleHeight;
       if (
-        newStar.y + ballSize >= paddleTop &&
-        newStar.y <= paddleTop + 4 &&
-        newStar.x + ballSize > currentPaddleX &&
-        newStar.x < currentPaddleX + paddleWidth
+        state.fallingStar.y + ballSize >= paddleTop &&
+        state.fallingStar.y <= paddleTop + 4 &&
+        state.fallingStar.x + ballSize > currentPaddleX &&
+        state.fallingStar.x < currentPaddleX + state.paddleWidth
       ) {
-        updatedBalls.push({ x: 160, y: 300, dx: 3.5, dy: -3.5 });
-        addPop(newStar.x, paddleTop);
-        newStar = null;
-      } else if (newStar.y > gameHeight) {
-        newStar = null;
+        state.balls.push({ x: 160, y: 300, dx: 3.5, dy: -3.5 });
+        addPop(state.fallingStar.x, paddleTop);
+        state.fallingStar = null;
+      } else if (state.fallingStar.y > gameHeight) {
+        state.fallingStar = null;
       }
     }
 
-    if (newHeart) {
-      newHeart.y += 2 * timeScale;
+    if (state.fallingHeart) {
+      state.fallingHeart.y += 2 * timeScale;
       const paddleTop = gameHeight - paddleHeight;
       if (
-        newHeart.y + ballSize >= paddleTop &&
-        newHeart.y <= paddleTop + 4 &&
-        newHeart.x + ballSize > currentPaddleX &&
-        newHeart.x < currentPaddleX + paddleWidth
+        state.fallingHeart.y + ballSize >= paddleTop &&
+        state.fallingHeart.y <= paddleTop + 4 &&
+        state.fallingHeart.x + ballSize > currentPaddleX &&
+        state.fallingHeart.x < currentPaddleX + state.paddleWidth
       ) {
-        setLives((l) => l + 1);
-        addPop(newHeart.x, paddleTop);
-        newHeart = null;
-      } else if (newHeart.y > gameHeight) {
-        newHeart = null;
+        state.lives += 1;
+        addPop(state.fallingHeart.x, paddleTop);
+        state.fallingHeart = null;
+      } else if (state.fallingHeart.y > gameHeight) {
+        state.fallingHeart = null;
       }
     }
 
-    if (newExpand) {
-      newExpand.y += 2 * timeScale;
+    if (state.fallingExpand) {
+      state.fallingExpand.y += 2 * timeScale;
       const paddleTop = gameHeight - paddleHeight;
       if (
-        newExpand.y + ballSize >= paddleTop &&
-        newExpand.y <= paddleTop + 4 &&
-        newExpand.x + ballSize > currentPaddleX &&
-        newExpand.x < currentPaddleX + paddleWidth
+        state.fallingExpand.y + ballSize >= paddleTop &&
+        state.fallingExpand.y <= paddleTop + 4 &&
+        state.fallingExpand.x + ballSize > currentPaddleX &&
+        state.fallingExpand.x < currentPaddleX + state.paddleWidth
       ) {
-        setPaddleWidth(100);
-        setTimeout(() => setPaddleWidth(60), 15000); // Lasts 15s
-        addPop(newExpand.x, paddleTop);
-        newExpand = null;
-      } else if (newExpand.y > gameHeight) {
-        newExpand = null;
+        state.paddleWidth = 100;
+        setTimeout(() => { if (physicsRef.current) physicsRef.current.paddleWidth = 60; }, 15000);
+        addPop(state.fallingExpand.x, paddleTop);
+        state.fallingExpand = null;
+      } else if (state.fallingExpand.y > gameHeight) {
+        state.fallingExpand = null;
       }
     }
 
-    if (newSpeed) {
-      newSpeed.y += 2.5 * timeScale;
+    if (state.fallingSpeed) {
+      state.fallingSpeed.y += 2.5 * timeScale;
       const paddleTop = gameHeight - paddleHeight;
       if (
-        newSpeed.y + ballSize >= paddleTop &&
-        newSpeed.y <= paddleTop + 4 &&
-        newSpeed.x + ballSize > currentPaddleX &&
-        newSpeed.x < currentPaddleX + paddleWidth
+        state.fallingSpeed.y + ballSize >= paddleTop &&
+        state.fallingSpeed.y <= paddleTop + 4 &&
+        state.fallingSpeed.x + ballSize > currentPaddleX &&
+        state.fallingSpeed.x < currentPaddleX + state.paddleWidth
       ) {
-        setSpeedBuffActive(true);
-        setTimeout(() => setSpeedBuffActive(false), 10000); // Fast speed lasts 10s
-        addPop(newSpeed.x, paddleTop);
-        newSpeed = null;
-      } else if (newSpeed.y > gameHeight) {
-        newSpeed = null;
+        state.speedBuffActive = true;
+        setTimeout(() => { if (physicsRef.current) physicsRef.current.speedBuffActive = false; }, 10000);
+        addPop(state.fallingSpeed.x, paddleTop);
+        state.fallingSpeed = null;
+      } else if (state.fallingSpeed.y > gameHeight) {
+        state.fallingSpeed = null;
       }
     }
 
-    const allBricksCleared = updatedBricks.every((b) => !b.status);
-    if (allBricksCleared) {
-      setBricks(updatedBricks); // visually clear the last brick
-      setLevelJustCompleted(true);
+    // Win condition check
+    const allBricksCleared = state.bricks.every((b) => !b.status);
+    if (allBricksCleared && !state.levelJustCompleted) {
+      state.levelJustCompleted = true;
       setLevelComplete(true);
       return;
     }
 
-    if (updatedBalls.length === 0 && !levelJustCompleted && !newStar && !newHeart && !newExpand && !newSpeed) {
-      clearInterval(ballInterval);
-      if (lives > 0) {
-        setLives((l) => l - 1);
+    // Loss condition check
+    if (state.balls.length === 0 && !state.levelJustCompleted && !state.fallingStar && !state.fallingHeart && !state.fallingExpand && !state.fallingSpeed) {
+      if (state.lives > 0) {
+        state.lives -= 1;
         setLifeLostState(true);
         setMessage("Life lost! Get ready...");
-        setTimeout(() => resumeAfterLifeLoss(), 5000);
+        let counter = 5;
+        setCountdown(counter);
+        const intv = setInterval(() => {
+          counter--;
+          setCountdown(counter);
+          if (counter <= 0) {
+            clearInterval(intv);
+            resumeAfterLifeLoss();
+          }
+        }, 1000);
         return;
       } else {
-        endGame(false, newScore);
+        endGame(false);
         return;
       }
     }
 
-    setBalls(updatedBalls);
-    setBricks(updatedBricks);
-    setScore(newScore);
-    setFallingStar(newStar);
-    setFallingHeart(newHeart);
-    setFallingExpand(newExpand);
-    setFallingSpeed(newSpeed);
+    setTick(t => t + 1); // Force React to paint the new frame
   };
 
   useEffect(() => {
     let animationFrameId;
     let lastTime = 0;
-    if (running && !paused) {
+    if (running && !paused && !lifeLostState) {
       const loop = (time) => {
         if (!lastTime) lastTime = time;
         const dt = (time - lastTime) / 1000;
         lastTime = time;
-        
-        const cappedDt = Math.min(dt, 0.1); // Max 100ms gap
-        if (moveBallRef.current) {
-          moveBallRef.current(cappedDt);
-        }
+        const cappedDt = Math.min(dt, 0.1); 
+        physicsLoop(cappedDt);
         animationFrameId = requestAnimationFrame(loop);
       };
       animationFrameId = requestAnimationFrame(loop);
     }
     return () => cancelAnimationFrame(animationFrameId);
-  }, [running, paused]);
+  }, [running, paused, lifeLostState]); // Safe dependencies because loop relies on physicsRef
 
   return {
-    gameWidth, gameHeight, paddleWidth, paddleHeight, ballSize,
-    running, paused, setPaused, score, topScore, message,
-    balls, paddleX, setPaddleX, bricks, level, fallingStar, fallingHeart, fallingExpand, fallingSpeed, speedBuffActive,
-    lives, levelComplete, showGameOver, popAnimations, lifeLostState, countdown,
+    gameWidth, gameHeight, ballSize, paddleHeight,
+    running, paused, setPaused, message, topScore,
+    levelComplete, showGameOver, lifeLostState, countdown, popAnimations,
+    paddleX, setPaddleX,
+    
+    // Spread the physics state so BrickBreaker.jsx can read it exactly as before
+    ...physicsRef.current,
+    
     startGame, restartGame, handleLevelAdvance, handleRetryLevel
   };
 };
